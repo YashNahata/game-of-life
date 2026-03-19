@@ -1,0 +1,143 @@
+.app-shell {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  height: 64px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--color-graphite);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-platinum);
+}
+
+.text-button,
+.icon-button {
+  border: 1px solid var(--color-charcoal);
+  background: var(--color-graphite);
+  color: var(--color-platinum);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.text-button {
+  padding: 0.45rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.icon-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.text-button:hover,
+.icon-button:hover {
+  background: var(--color-charcoal);
+}
+
+.text-button:focus-visible,
+.icon-button:focus-visible {
+  outline: 2px solid var(--color-grey-olive);
+  outline-offset: 2px;
+}
+
+.app-main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 3fr 1fr;
+}
+
+.grid-section {
+  position: relative;
+  min-height: 0;
+  padding: 16px;
+  border-bottom: 1px solid var(--color-graphite);
+}
+
+.grid-placeholder,
+.variables-placeholder {
+  height: 100%;
+  width: 100%;
+  border: 1px dashed var(--color-grey-olive);
+  background: var(--color-graphite);
+  color: var(--color-grey-olive);
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+  border-radius: 8px;
+}
+
+.zoom-controls {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  display: flex;
+  gap: 8px;
+}
+
+.variables-section {
+  min-height: 0;
+  padding: 16px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(23 23 23 / 70%);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.modal-panel {
+  width: min(560px, 100%);
+  background: var(--color-graphite);
+  border: 1px solid var(--color-charcoal);
+  border-radius: 10px;
+  padding: 16px;
+  color: var(--color-platinum);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--color-platinum);
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    height: 56px;
+    padding: 0 12px;
+  }
+
+  .grid-section,
+  .variables-section {
+    padding: 12px;
+  }
+
+  .zoom-controls {
+    right: 16px;
+    bottom: 16px;
+  }
+}

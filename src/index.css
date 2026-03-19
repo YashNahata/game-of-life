@@ -1,0 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --color-carbon-black: #171717;
+  --color-graphite: #323232;
+  --color-charcoal: #525252;
+  --color-grey-olive: #919191;
+  --color-platinum: #f1f1f1;
+}
+
+:root {
+  line-height: 1.4;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100svh;
+}
+
+body {
+  margin: 0;
+  background: var(--color-carbon-black);
+  color: var(--color-platinum);
+  font-family: 'Lato', sans-serif;
+}
+
+#root {
+  width: min(1024px, 100%);
+  margin: 0 auto;
+  border-inline: 1px solid var(--color-graphite);
+}
+
+button {
+  font: inherit;
+}
