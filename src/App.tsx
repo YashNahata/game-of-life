@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { countAliveCells, getNextGeneration } from './lib/gameOfLife'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from 'react'
 import { createPatternGrid, createRandomGrid } from './lib/gridInit'
 import { PATTERN_NAMES } from './lib/patterns'
 import type { PatternName, SpeedMultiplier } from './types/game'
@@ -7,6 +15,22 @@ import type { PatternName, SpeedMultiplier } from './types/game'
 const DEFAULT_ROWS = 25
 const DEFAULT_COLS = 40
 const BASE_INTERVAL_MS = 300
+const BASE_CELL_SIZE = 18
+const VIEWPORT_INSET_PX = 24
+const MIN_ZOOM = 0.5
+const MAX_ZOOM = 2
+const ZOOM_STEP = 0.25
+const DRAG_THRESHOLD_PX = 4
+const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
+  [-1, -1],
+  [-1, 0],
+  [-1, 1],
+  [0, -1],
+  [0, 1],
+  [1, -1],
+  [1, 0],
+  [1, 1],
+]
 
 type SeedMode = 'pattern' | 'random'
 
@@ -36,6 +60,81 @@ const PATTERN_NOTES: Array<{ name: PatternName; description: string }> = [
   { name: 'Pulsar', description: 'Large period-3 oscillator with radial symmetry.' },
 ]
 
+const clampZoom = (value: number) =>
+  Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value.toFixed(2))))
+
+type CellKey = `${number},${number}`
+
+const createCellKey = (x: number, y: number): CellKey => `${x},${y}`
+
+const parseCellKey = (key: CellKey): [number, number] => {
+  const [x, y] = key.split(',')
+  return [Number(x), Number(y)]
+}
+
+const seedAliveCells = (
+  mode: SeedMode,
+  patternName: PatternName,
+  density: number,
+): Set<CellKey> => {
+  const seedGrid =
+    mode === 'pattern'
+      ? createPatternGrid(DEFAULT_ROWS, DEFAULT_COLS, patternName)
+      : createRandomGrid(DEFAULT_ROWS, DEFAULT_COLS, density)
+
+  const centerCol = Math.floor(DEFAULT_COLS / 2)
+  const centerRow = Math.floor(DEFAULT_ROWS / 2)
+  const alive = new Set<CellKey>()
+
+  for (let row = 0; row < seedGrid.length; row += 1) {
+    for (let col = 0; col < seedGrid[row].length; col += 1) {
+      if (seedGrid[row][col] === 1) {
+        alive.add(createCellKey(col - centerCol, row - centerRow))
+      }
+    }
+  }
+
+  return alive
+}
+
+const computeNextAliveCells = (currentAlive: Set<CellKey>): Set<CellKey> => {
+  const neighborCounts = new Map<CellKey, number>()
+
+  for (const key of currentAlive) {
+    const [x, y] = parseCellKey(key)
+
+    for (const [dx, dy] of NEIGHBOR_OFFSETS) {
+      const neighborKey = createCellKey(x + dx, y + dy)
+      const count = neighborCounts.get(neighborKey) ?? 0
+      neighborCounts.set(neighborKey, count + 1)
+    }
+  }
+
+  const nextAlive = new Set<CellKey>()
+
+  for (const [cellKey, count] of neighborCounts) {
+    const currentlyAlive = currentAlive.has(cellKey)
+    if (count === 3 || (currentlyAlive && count === 2)) {
+      nextAlive.add(cellKey)
+    }
+  }
+
+  return nextAlive
+}
+
+const toggleAliveCell = (currentAlive: Set<CellKey>, x: number, y: number): Set<CellKey> => {
+  const nextAlive = new Set(currentAlive)
+  const key = createCellKey(x, y)
+
+  if (nextAlive.has(key)) {
+    nextAlive.delete(key)
+  } else {
+    nextAlive.add(key)
+  }
+
+  return nextAlive
+}
+
 function App() {
   const [isHowItWorksOpen, setIsHowItWorksOpen] = useState(false)
   const [seedMode, setSeedMode] = useState<SeedMode>('pattern')
@@ -43,26 +142,205 @@ function App() {
   const [density, setDensity] = useState(0.25)
   const [speedMultiplier, setSpeedMultiplier] = useState<SpeedMultiplier>(1)
   const [isRunning, setIsRunning] = useState(false)
+  const [zoomLevel, setZoomLevel] = useState(1)
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
   const [generation, setGeneration] = useState(0)
-  const [grid, setGrid] = useState(() =>
-    createPatternGrid(DEFAULT_ROWS, DEFAULT_COLS, 'Glider'),
+  const [aliveCells, setAliveCells] = useState<Set<CellKey>>(() =>
+    seedAliveCells('pattern', 'Glider', 0.25),
   )
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const pointerStateRef = useRef<{
+    id: number | null
+    startX: number
+    startY: number
+    startPanX: number
+    startPanY: number
+    isPanning: boolean
+    moved: boolean
+  }>({
+    id: null,
+    startX: 0,
+    startY: 0,
+    startPanX: 0,
+    startPanY: 0,
+    isPanning: false,
+    moved: false,
+  })
+  const suppressNextCellToggleRef = useRef(false)
+  const viewportInnerWidth = Math.max(0, viewportSize.width - VIEWPORT_INSET_PX)
+  const responsiveBaseCellSize =
+    viewportInnerWidth > 0
+      ? Math.max(BASE_CELL_SIZE, viewportInnerWidth / DEFAULT_COLS)
+      : BASE_CELL_SIZE
+  const effectiveCellSize = responsiveBaseCellSize * zoomLevel
 
   const advanceGeneration = useCallback(() => {
-    setGrid((previousGrid) => getNextGeneration(previousGrid))
+    setAliveCells((previousAlive) => computeNextAliveCells(previousAlive))
     setGeneration((previousGeneration) => previousGeneration + 1)
   }, [])
 
   const regenerateGrid = useCallback(() => {
-    const nextGrid =
-      seedMode === 'pattern'
-        ? createPatternGrid(DEFAULT_ROWS, DEFAULT_COLS, selectedPattern)
-        : createRandomGrid(DEFAULT_ROWS, DEFAULT_COLS, density)
-
-    setGrid(nextGrid)
+    setAliveCells(seedAliveCells(seedMode, selectedPattern, density))
     setGeneration(0)
     setIsRunning(false)
+    setPanOffset({ x: 0, y: 0 })
+    setZoomLevel(1)
   }, [density, seedMode, selectedPattern])
+
+  const zoomTo = useCallback(
+    (nextZoom: number, origin?: { clientX: number; clientY: number }) => {
+      const viewport = viewportRef.current
+      if (!viewport) {
+        setZoomLevel(nextZoom)
+        return
+      }
+
+      const rect = viewport.getBoundingClientRect()
+      const centerX = rect.width / 2
+      const centerY = rect.height / 2
+      const anchorX = origin ? origin.clientX - rect.left : centerX
+      const anchorY = origin ? origin.clientY - rect.top : centerY
+
+      const currentCellSize = responsiveBaseCellSize * zoomLevel
+      const nextCellSize = responsiveBaseCellSize * nextZoom
+
+      setPanOffset((previousPan) => {
+        const worldX = (anchorX - centerX - previousPan.x) / currentCellSize
+        const worldY = (anchorY - centerY - previousPan.y) / currentCellSize
+
+        return {
+          x: anchorX - centerX - worldX * nextCellSize,
+          y: anchorY - centerY - worldY * nextCellSize,
+        }
+      })
+
+      setZoomLevel(nextZoom)
+    },
+    [responsiveBaseCellSize, zoomLevel],
+  )
+
+  const zoomIn = useCallback(() => {
+    const nextZoom = clampZoom(zoomLevel + ZOOM_STEP)
+    if (nextZoom !== zoomLevel) {
+      zoomTo(nextZoom)
+    }
+  }, [zoomLevel, zoomTo])
+
+  const zoomOut = useCallback(() => {
+    const nextZoom = clampZoom(zoomLevel - ZOOM_STEP)
+    if (nextZoom !== zoomLevel) {
+      zoomTo(nextZoom)
+    }
+  }, [zoomLevel, zoomTo])
+
+  const onCellToggle = useCallback(
+    (x: number, y: number) => {
+      if (suppressNextCellToggleRef.current) {
+        suppressNextCellToggleRef.current = false
+        return
+      }
+
+      if (isRunning) {
+        return
+      }
+
+      setAliveCells((previousAlive) => toggleAliveCell(previousAlive, x, y))
+    },
+    [isRunning],
+  )
+
+  const onViewportPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const viewport = viewportRef.current
+    if (!viewport) {
+      return
+    }
+
+    pointerStateRef.current = {
+      id: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startPanX: panOffset.x,
+      startPanY: panOffset.y,
+      isPanning: false,
+      moved: false,
+    }
+  }, [panOffset.x, panOffset.y])
+
+  const onViewportPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const viewport = viewportRef.current
+    const pointer = pointerStateRef.current
+    if (!viewport || pointer.id !== event.pointerId) {
+      return
+    }
+
+    const deltaX = event.clientX - pointer.startX
+    const deltaY = event.clientY - pointer.startY
+
+    if (!pointer.isPanning) {
+      const exceededThreshold =
+        Math.abs(deltaX) > DRAG_THRESHOLD_PX || Math.abs(deltaY) > DRAG_THRESHOLD_PX
+
+      if (!exceededThreshold) {
+        return
+      }
+
+      pointerStateRef.current.isPanning = true
+      pointerStateRef.current.moved = true
+      viewport.setPointerCapture(event.pointerId)
+    }
+
+    setPanOffset({
+      x: pointer.startPanX + deltaX,
+      y: pointer.startPanY + deltaY,
+    })
+  }, [])
+
+  const onViewportPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const viewport = viewportRef.current
+    const pointer = pointerStateRef.current
+    if (!viewport || pointer.id !== event.pointerId) {
+      return
+    }
+
+    if (pointer.moved) {
+      suppressNextCellToggleRef.current = true
+      window.setTimeout(() => {
+        suppressNextCellToggleRef.current = false
+      }, 0)
+    }
+
+    if (pointer.isPanning && viewport.hasPointerCapture(event.pointerId)) {
+      viewport.releasePointerCapture(event.pointerId)
+    }
+
+    pointerStateRef.current.id = null
+    pointerStateRef.current.isPanning = false
+  }, [])
+
+  const onViewportClickCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!suppressNextCellToggleRef.current) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    suppressNextCellToggleRef.current = false
+  }, [])
+
+  const onViewportWheel = useCallback(
+    (event: ReactWheelEvent<HTMLDivElement>) => {
+      event.preventDefault()
+
+      const direction = event.deltaY < 0 ? 1 : -1
+      const nextZoom = clampZoom(zoomLevel + direction * ZOOM_STEP)
+
+      if (nextZoom !== zoomLevel) {
+        zoomTo(nextZoom, { clientX: event.clientX, clientY: event.clientY })
+      }
+    },
+    [zoomLevel, zoomTo],
+  )
 
   useEffect(() => {
     if (!isRunning) {
@@ -92,7 +370,82 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [isHowItWorksOpen])
 
-  const aliveCells = useMemo(() => countAliveCells(grid), [grid])
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) {
+      return undefined
+    }
+
+    const updateSize = () => {
+      setViewportSize({
+        width: viewport.clientWidth,
+        height: viewport.clientHeight,
+      })
+    }
+
+    updateSize()
+
+    const observer = new ResizeObserver(() => {
+      updateSize()
+    })
+
+    observer.observe(viewport)
+
+    return () => observer.disconnect()
+  }, [])
+
+  const viewportWidth = viewportSize.width
+  const viewportHeight = viewportSize.height
+  const centerX = viewportWidth / 2
+  const centerY = viewportHeight / 2
+  const minVisibleX = Math.floor((-centerX - panOffset.x) / effectiveCellSize) - 1
+  const maxVisibleX = Math.ceil((viewportWidth - centerX - panOffset.x) / effectiveCellSize) + 1
+  const minVisibleY = Math.floor((-centerY - panOffset.y) / effectiveCellSize) - 1
+  const maxVisibleY = Math.ceil((viewportHeight - centerY - panOffset.y) / effectiveCellSize) + 1
+  const visibleCells = useMemo(() => {
+    const cells: Array<{
+      x: number
+      y: number
+      left: number
+      top: number
+      isAlive: boolean
+    }> = []
+
+    for (let y = minVisibleY; y <= maxVisibleY; y += 1) {
+      for (let x = minVisibleX; x <= maxVisibleX; x += 1) {
+        cells.push({
+          x,
+          y,
+          left: centerX + panOffset.x + x * effectiveCellSize,
+          top: centerY + panOffset.y + y * effectiveCellSize,
+          isAlive: aliveCells.has(createCellKey(x, y)),
+        })
+      }
+    }
+
+    return cells
+  }, [
+    minVisibleY,
+    maxVisibleY,
+    minVisibleX,
+    maxVisibleX,
+    centerX,
+    centerY,
+    panOffset.x,
+    panOffset.y,
+    effectiveCellSize,
+    aliveCells,
+  ])
+  const gridLineSize = Math.max(8, effectiveCellSize)
+  const viewportGridStyle = {
+    backgroundImage:
+      'linear-gradient(to right, #525252 1px, transparent 1px), linear-gradient(to bottom, #525252 1px, transparent 1px)',
+    backgroundSize: `${gridLineSize}px ${gridLineSize}px`,
+    backgroundPosition: `${centerX + panOffset.x}px ${centerY + panOffset.y}px`,
+  }
+  const aliveCount = aliveCells.size
+  const canZoomOut = zoomLevel > MIN_ZOOM
+  const canZoomIn = zoomLevel < MAX_ZOOM
 
   return (
     <div className="flex min-h-full flex-col">
@@ -107,35 +460,70 @@ function App() {
         </button>
       </header>
 
-      <main className="grid flex-1 min-h-0 grid-rows-[3fr_1fr]">
+      <main className="grid flex-1 min-h-0 grid-rows-[1fr_1fr]">
         <section
           className="relative min-h-0 border-b border-graphite p-4 md:p-3"
           aria-label="Game grid"
         >
-          <div className="grid h-full w-full gap-3 rounded-lg border border-dashed border-grey-olive bg-graphite p-4 text-sm text-grey-olive">
-            <p className="m-0">Grid rendering lands in Phase 4.</p>
-            <p className="m-0 text-platinum">
-              Size: {DEFAULT_COLS} × {DEFAULT_ROWS} · Alive cells: {aliveCells}
-            </p>
-            <p className="m-0">
-              Seed mode: {seedMode === 'pattern' ? `Pattern (${selectedPattern})` : `Random (${Math.round(density * 100)}%)`}
-            </p>
+          <div
+            ref={viewportRef}
+            className="relative h-full w-full cursor-grab overflow-hidden rounded-lg border border-dashed border-grey-olive bg-carbon-black p-3 active:cursor-grabbing"
+            onPointerDown={onViewportPointerDown}
+            onPointerMove={onViewportPointerMove}
+            onPointerUp={onViewportPointerUp}
+            onPointerCancel={onViewportPointerUp}
+            onWheel={onViewportWheel}
+            onClickCapture={onViewportClickCapture}
+            style={viewportGridStyle}
+          >
+            <div className="absolute inset-0 overflow-hidden">
+              {visibleCells.map((cell) => (
+                <button
+                  key={`${cell.x},${cell.y}`}
+                  type="button"
+                  aria-label={`Cell ${cell.y}, ${cell.x}`}
+                  aria-pressed={cell.isAlive}
+                  disabled={isRunning}
+                  onClick={() => onCellToggle(cell.x, cell.y)}
+                  className={`absolute border border-charcoal/60 transition-colors ${
+                    cell.isAlive
+                      ? 'bg-platinum'
+                      : 'bg-graphite hover:bg-charcoal'
+                  } ${
+                    isRunning ? 'cursor-not-allowed' : 'cursor-pointer'
+                  }`}
+                  style={{
+                    left: cell.left,
+                    top: cell.top,
+                    width: effectiveCellSize,
+                    height: effectiveCellSize,
+                  }}
+                />
+              ))}
+            </div>
           </div>
           <div className="absolute bottom-6 right-6 flex gap-2 md:bottom-4 md:right-4" aria-label="Zoom controls">
             <button
               type="button"
-              className="h-9 w-9 cursor-pointer rounded-lg border border-charcoal bg-graphite text-xl leading-none text-platinum transition-colors hover:bg-charcoal focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-grey-olive"
+              className="h-9 w-9 cursor-pointer rounded-lg border border-charcoal bg-graphite text-xl leading-none text-platinum transition-colors hover:bg-charcoal focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-grey-olive disabled:cursor-not-allowed disabled:opacity-60"
               aria-label="Zoom out"
+              onClick={zoomOut}
+              disabled={!canZoomOut}
             >
               -
             </button>
             <button
               type="button"
-              className="h-9 w-9 cursor-pointer rounded-lg border border-charcoal bg-graphite text-xl leading-none text-platinum transition-colors hover:bg-charcoal focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-grey-olive"
+              className="h-9 w-9 cursor-pointer rounded-lg border border-charcoal bg-graphite text-xl leading-none text-platinum transition-colors hover:bg-charcoal focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-grey-olive disabled:cursor-not-allowed disabled:opacity-60"
               aria-label="Zoom in"
+              onClick={zoomIn}
+              disabled={!canZoomIn}
             >
               +
             </button>
+            <span className="flex h-9 min-w-14 items-center justify-center rounded-lg border border-charcoal bg-graphite px-2 text-xs text-grey-olive">
+              {zoomLevel.toFixed(2)}x
+            </span>
           </div>
         </section>
 
@@ -145,6 +533,7 @@ function App() {
               <div className="grid gap-1">
                 <p className="m-0 text-grey-olive">Current generation</p>
                 <p className="m-0 text-base font-semibold text-platinum">{generation}</p>
+                <p className="m-0 text-grey-olive">Alive cells: {aliveCount}</p>
               </div>
               <div className="flex flex-wrap gap-2 md:justify-end">
                 <button
