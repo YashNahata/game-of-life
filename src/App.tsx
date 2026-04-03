@@ -44,10 +44,10 @@ const CONWAY_RULES = [
 ];
 
 const CONTROL_NOTES = [
-  "Resume/Pause starts or stops automatic generation updates.",
+  "Start/Resume/Pause controls automatic generation updates.",
   "Next advances exactly one generation while keeping simulation paused state.",
   "Speed buttons set update frequency using 1x, 2x, 4x, and 8x multipliers.",
-  "Start mode lets you regenerate from a preset pattern or random density.",
+  "Pattern selection applies instantly; random mode uses density with regenerate.",
 ];
 
 const PATTERN_NOTES: Array<{ name: PatternName; description: string }> = [
@@ -206,6 +206,23 @@ function App() {
     setPanOffset({ x: 0, y: 0 });
     setZoomLevel(1);
   }, [density, seedMode, selectedPattern]);
+
+  const applyPatternSelection = useCallback(
+    (pattern: PatternName) => {
+      setSelectedPattern(pattern);
+
+      if (seedMode !== "pattern") {
+        return;
+      }
+
+      setAliveCells(seedAliveCells("pattern", pattern, density));
+      setGeneration(0);
+      setIsRunning(false);
+      setPanOffset({ x: 0, y: 0 });
+      setZoomLevel(1);
+    },
+    [density, seedMode],
+  );
 
   const zoomTo = useCallback(
     (nextZoom: number, origin?: { clientX: number; clientY: number }) => {
@@ -482,13 +499,17 @@ function App() {
   const aliveCount = aliveCells.size;
   const canZoomOut = zoomLevel > MIN_ZOOM;
   const canZoomIn = zoomLevel < MAX_ZOOM;
+  const isFirstRun = generation === 0 && !isRunning;
 
   return (
     <div className="flex min-h-full flex-col">
       <header className="flex h-16 items-center justify-between border-b border-graphite px-5 md:h-14 md:px-3">
-        <h1 className="m-0 text-lg font-semibold text-platinum">
-          Game of Life
-        </h1>
+        <div className="flex justify-center items-center gap-1">
+          <img src="/logo.svg" alt="Game of Life Logo" width={48} height={48} />
+          <h1 className="m-0 text-lg font-semibold text-platinum">
+            Game of Life
+          </h1>
+        </div>
         <button
           type="button"
           className="cursor-pointer rounded-md border border-charcoal bg-graphite px-3 py-2 text-sm text-platinum transition-colors hover:bg-charcoal focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-grey-olive"
@@ -526,7 +547,9 @@ function App() {
                   className={`absolute border border-charcoal/60 transition-colors ${
                     cell.isAlive
                       ? "bg-platinum"
-                      : "bg-graphite hover:bg-charcoal"
+                      : isRunning
+                        ? "bg-graphite"
+                        : "bg-graphite hover:bg-charcoal"
                   } ${isRunning ? "cursor-not-allowed" : "cursor-pointer"}`}
                   style={{
                     left: cell.left,
@@ -582,7 +605,7 @@ function App() {
                   className="cursor-pointer rounded-md border border-charcoal bg-graphite px-3 py-2 text-sm text-platinum transition-colors hover:bg-charcoal focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-grey-olive"
                   onClick={() => setIsRunning((previous) => !previous)}
                 >
-                  {isRunning ? "Pause" : "Resume"}
+                  {isRunning ? "Pause" : isFirstRun ? "Start" : "Resume"}
                 </button>
                 <button
                   type="button"
@@ -624,9 +647,20 @@ function App() {
                 <select
                   className="rounded-md border border-charcoal bg-carbon-black px-3 py-2 text-platinum focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-grey-olive"
                   value={seedMode}
-                  onChange={(event) =>
-                    setSeedMode(event.target.value as SeedMode)
-                  }
+                  onChange={(event) => {
+                    const nextMode = event.target.value as SeedMode;
+                    setSeedMode(nextMode);
+
+                    if (nextMode === "pattern") {
+                      setAliveCells(
+                        seedAliveCells("pattern", selectedPattern, density),
+                      );
+                      setGeneration(0);
+                      setIsRunning(false);
+                      setPanOffset({ x: 0, y: 0 });
+                      setZoomLevel(1);
+                    }
+                  }}
                 >
                   <option value="pattern">Pattern</option>
                   <option value="random">Random</option>
@@ -639,7 +673,7 @@ function App() {
                   className="rounded-md border border-charcoal bg-carbon-black px-3 py-2 text-platinum focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-grey-olive disabled:cursor-not-allowed disabled:opacity-60"
                   value={selectedPattern}
                   onChange={(event) =>
-                    setSelectedPattern(event.target.value as PatternName)
+                    applyPatternSelection(event.target.value as PatternName)
                   }
                   disabled={seedMode !== "pattern"}
                 >
@@ -665,7 +699,8 @@ function App() {
                 onChange={(event) =>
                   setDensity(Number(event.target.value) / 100)
                 }
-                className="accent-grey-olive"
+                disabled={seedMode !== "random"}
+                className="accent-grey-olive disabled:cursor-not-allowed disabled:opacity-50"
               />
             </label>
 
