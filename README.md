@@ -2,6 +2,8 @@
 
 An interactive implementation of **Conway's Game of Life** built with React, TypeScript, Vite, and Tailwind CSS.
 
+<img width="1588" height="1104" alt="Sample Image" src="https://github.com/user-attachments/assets/c0a96c55-38c1-43a4-b112-925af41d37e8" />
+
 ## About the Game
 
 Game of Life is a cellular automaton where each cell is either alive or dead.
